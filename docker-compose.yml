@@ -1,0 +1,99 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database for persistent storage and deduplication
+  storage:
+    image: postgres:16-alpine
+    container_name: uas-storage
+    environment:
+      POSTGRES_DB: aggregator_db
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U user -d aggregator_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aggregator_network
+    restart: unless-stopped
+
+  # Redis message broker (optional but recommended)
+  broker:
+    image: redis:7-alpine
+    container_name: uas-broker
+    command: redis-server --appendonly yes
+    volumes:
+      - broker_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aggregator_network
+    restart: unless-stopped
+
+  # Main aggregator service with API
+  aggregator:
+    build:
+      context: ./aggregator
+      dockerfile: Dockerfile
+    image: uas-aggregator:latest
+    container_name: uas-aggregator
+    depends_on:
+      storage:
+        condition: service_healthy
+      broker:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://user:pass@storage:5432/aggregator_db
+      - BROKER_URL=redis://broker:6379
+      - PORT=8080
+      - SQL_ECHO=false
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: [ "CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health')\" || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - aggregator_network
+    restart: unless-stopped
+
+  # Event publisher service
+  publisher:
+    build:
+      context: ./publisher
+      dockerfile: Dockerfile
+    image: uas-publisher:latest
+    container_name: uas-publisher
+    depends_on:
+      aggregator:
+        condition: service_healthy
+    environment:
+      - AGGREGATOR_URL=http://aggregator:8080/publish
+      - NUM_EVENTS=25000
+      - DUPLICATION_RATE=0.30
+      - BATCH_SIZE=100
+      - DELAY_MS=10
+    networks:
+      - aggregator_network
+    restart: "no" # Run once and exit
+
+# Named volumes for data persistence
+volumes:
+  pg_data:
+    name: uas_pg_data
+  broker_data:
+    name: uas_broker_data
+
+# Internal network (no external access)
+networks:
+  aggregator_network:
+    name: uas_network
+    driver: bridge

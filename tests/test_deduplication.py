@@ -9,7 +9,7 @@ from datetime import datetime
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'aggregator'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'aggregator', 'src'))
 
 from app.models import EventModel, ProcessedEvent
 from app.consumer import IdempotentConsumer

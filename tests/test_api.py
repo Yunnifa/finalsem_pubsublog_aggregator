@@ -9,9 +9,10 @@ from fastapi.testclient import TestClient
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'aggregator'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'aggregator', 'src'))
 
-from app.main import app
+import main
+app = main.app
 
 client = TestClient(app)
 

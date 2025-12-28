@@ -1,35 +1,45 @@
 """
 Data models for event schema and database tables.
+Defines both SQLAlchemy ORM models and Pydantic validation schemas.
+Updated for SQLAlchemy 2.0 and Pydantic V2 standards.
 """
 from datetime import datetime
-from typing import Dict, Any, Optional
-from pydantic import BaseModel, Field, validator
+from typing import Dict, Any, List, Optional
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from sqlalchemy import Column, Integer, String, DateTime, UniqueConstraint, BigInteger, JSON
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.sql import func
 
+# SQLAlchemy 2.0 standard for base class
 Base = declarative_base()
 
+# --- PYDANTIC MODELS (Validation & API) ---
 
 class EventModel(BaseModel):
-    """Pydantic model for event validation."""
+    """
+    Pydantic model for event validation.
+    Satisfies Requirement: Event JSON schema validation.
+    """
     topic: str = Field(..., min_length=1, max_length=255, description="Event topic")
     event_id: str = Field(..., min_length=1, max_length=255, description="Unique event identifier")
     timestamp: str = Field(..., description="ISO8601 timestamp")
     source: str = Field(..., min_length=1, max_length=255, description="Event source")
     payload: Dict[str, Any] = Field(..., description="Event payload data")
 
-    @validator('timestamp')
-    def validate_timestamp(cls, v):
-        """Validate ISO8601 timestamp format."""
+    @field_validator('timestamp')
+    @classmethod
+    def validate_timestamp(cls, v: str) -> str:
+        """Validate ISO8601 timestamp format (Bab 5: Time and Ordering)."""
         try:
+            # Handle Z suffix and convert to offset-aware datetime
             datetime.fromisoformat(v.replace('Z', '+00:00'))
         except ValueError:
             raise ValueError('timestamp must be valid ISO8601 format')
         return v
 
-    class Config:
-        schema_extra = {
+    # Pydantic V2 configuration style
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "topic": "user.login",
                 "event_id": "evt-123456",
@@ -38,71 +48,72 @@ class EventModel(BaseModel):
                 "payload": {"user_id": 42, "action": "login"}
             }
         }
+    )
 
 
 class BatchEventModel(BaseModel):
-    """Model for batch event submission."""
-    events: list[EventModel] = Field(..., min_items=1, description="List of events")
+    """Model for batch event submission (Requirement: Batch Processing)."""
+    # min_items diganti menjadi min_length di Pydantic V2
+    events: List[EventModel] = Field(..., min_length=1, description="List of events")
 
+
+# --- SQLALCHEMY MODELS (Database Persistence) ---
 
 class ProcessedEvent(Base):
-    """Database model for processed events with deduplication."""
+    """
+    Database model for processed events.
+    BAB 9: Idempotency & Concurrency Control.
+    """
     __tablename__ = 'processed_events'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     topic = Column(String(255), nullable=False, index=True)
-    event_id = Column(String(255), nullable=False)
+    event_id = Column(String(255), nullable=False, index=True)
     timestamp = Column(DateTime(timezone=True), nullable=False)
     source = Column(String(255), nullable=False)
     payload = Column(JSON, nullable=False)
     processed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    # Unique constraint for idempotency: (topic, event_id) must be unique
+    # BAB 9: Unique Constraint for strong deduplication.
     __table_args__ = (
         UniqueConstraint('topic', 'event_id', name='uq_topic_event_id'),
     )
 
 
 class Stats(Base):
-    """Database model for aggregator statistics."""
+    """
+    Database model for aggregator statistics.
+    BAB 8: Transactional statistics storage.
+    """
     __tablename__ = 'stats'
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, default=1)
     received = Column(BigInteger, default=0, nullable=False)
     unique_processed = Column(BigInteger, default=0, nullable=False)
     duplicate_dropped = Column(BigInteger, default=0, nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
-class StatsResponse(BaseModel):
-    """Response model for /stats endpoint."""
-    received: int = Field(..., description="Total events received")
-    unique_processed: int = Field(..., description="Unique events processed")
-    duplicate_dropped: int = Field(..., description="Duplicate events dropped")
-    topics: int = Field(..., description="Number of distinct topics")
-    uptime: float = Field(..., description="Service uptime in seconds")
+# --- RESPONSE MODELS ---
 
-    class Config:
-        schema_extra = {
-            "example": {
-                "received": 25000,
-                "unique_processed": 17500,
-                "duplicate_dropped": 7500,
-                "topics": 5,
-                "uptime": 3600.5
-            }
-        }
+class StatsResponse(BaseModel):
+    """Response model for GET /stats (Requirement: Observability)."""
+    received: int
+    unique_processed: int
+    duplicate_dropped: int
+    topics: int
+    uptime: float
 
 
 class EventResponse(BaseModel):
-    """Response model for event queries."""
+    """Response model for GET /events."""
     id: int
     topic: str
     event_id: str
-    timestamp: str
+    timestamp: datetime
     source: str
     payload: Dict[str, Any]
-    processed_at: str
+    processed_at: datetime
 
-    class Config:
-        orm_mode = True
+    # orm_mode diganti menjadi from_attributes di Pydantic V2
+    model_config = ConfigDict(from_attributes=True)

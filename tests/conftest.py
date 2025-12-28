@@ -1,50 +1,29 @@
-"""
-Shared test configuration and fixtures.
-"""
 import pytest
 import os
 import sys
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
 
-# Add parent directory to path to import app modules
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'aggregator'))
+# Fix Path agar import app.models dkk tidak error
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+SRC_DIR = os.path.join(BASE_DIR, 'aggregator', 'src')
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
 
-from app.models import Base
-from app.database import SessionLocal, engine
+from app.database import SessionLocal, engine, Base
 
-# Test database URL
-TEST_DATABASE_URL = os.getenv(
-    "TEST_DATABASE_URL",
-    "postgresql://user:pass@localhost:5432/test_aggregator_db"
-)
-
-
-@pytest.fixture(scope="function")
-def test_engine():
-    """Create a test database engine."""
-    test_engine = create_engine(TEST_DATABASE_URL)
-    Base.metadata.create_all(bind=test_engine)
-    yield test_engine
-    Base.metadata.drop_all(bind=test_engine)
-    test_engine.dispose()
-
-
-@pytest.fixture(scope="function")
-def test_db_session(test_engine):
-    """Create a test database session."""
-    TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
-    session = TestSessionLocal()
-    try:
-        yield session
-    finally:
-        session.close()
-
-
-@pytest.fixture(scope="function")
-def clean_db():
-    """Clean database before each test."""
-    Base.metadata.drop_all(bind=engine)
+@pytest.fixture(scope="session", autouse=True)
+def setup_db():
     Base.metadata.create_all(bind=engine)
     yield
-    Base.metadata.drop_all(bind=engine)
+
+@pytest.fixture(autouse=True)
+def db_cleaner():
+    """Membersihkan database sebelum setiap fungsi test."""
+    with SessionLocal() as session:
+        # Gunakan TRUNCATE CASCADE agar semua tabel bersih dan ID mulai dari 1 lagi
+        # Sesuaikan nama tabel dengan yang ada di database Anda
+        session.execute(text("TRUNCATE TABLE processed_events, stats RESTART IDENTITY CASCADE;"))
+        # Masukkan row stats awal agar update_stats_atomic selalu menemukan ID=1
+        session.execute(text("INSERT INTO stats (id, received, unique_processed, duplicate_dropped) VALUES (1, 0, 0, 0)"))
+        session.commit()
+    yield

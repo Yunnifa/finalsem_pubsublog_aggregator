@@ -5,6 +5,8 @@ services:
   storage:
     image: postgres:16-alpine
     container_name: uas-storage
+    ports:
+      - "5432:5432"  # Membuka akses untuk pengujian dari Host (Windows)
     environment:
       POSTGRES_DB: aggregator_db
       POSTGRES_USER: user
@@ -20,7 +22,7 @@ services:
       - aggregator_network
     restart: unless-stopped
 
-  # Redis message broker (optional but recommended)
+  # Redis message broker
   broker:
     image: redis:7-alpine
     container_name: uas-broker
@@ -56,6 +58,7 @@ services:
     ports:
       - "8080:8080"
     healthcheck:
+      # Menggunakan urllib karena slim image biasanya tidak punya curl
       test: [ "CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health')\" || exit 1" ]
       interval: 30s
       timeout: 10s
@@ -83,16 +86,16 @@ services:
       - DELAY_MS=10
     networks:
       - aggregator_network
-    restart: "no" # Run once and exit
+    restart: "no" 
 
-# Named volumes for data persistence
+# Named volumes for data persistence (Syarat: Bab 11)
 volumes:
   pg_data:
     name: uas_pg_data
   broker_data:
     name: uas_broker_data
 
-# Internal network (no external access)
+# Internal network (Syarat: Bab 10)
 networks:
   aggregator_network:
     name: uas_network
